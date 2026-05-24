@@ -25,19 +25,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
 
   const fetchProfile = useCallback(async (userId: string) => {
-    const { data } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single()
-    
-    if (data) {
-      setProfile(data)
-      // Update last_seen
-      await supabase
+    try {
+      const { data } = await supabase
         .from('profiles')
-        .update({ last_seen: new Date().toISOString() })
+        .select('*')
         .eq('id', userId)
+        .single()
+      
+      if (data) {
+        setProfile(data)
+        // Update last_seen
+        await supabase
+          .from('profiles')
+          .update({ last_seen: new Date().toISOString() })
+          .eq('id', userId)
+      } else {
+        // Se a conta não tem perfil criado ainda, não deixa o state nulo travar a tela
+        setProfile(null)
+      }
+    } catch (error) {
+      console.error("Erro ao buscar perfil:", error)
+    } finally {
+      // GARANTE QUE DESLIGA O LOADING MESMO SE NÃO ACHAR PERFIL NO BANCO
+      setLoading(false)
     }
   }, [supabase])
 
@@ -49,12 +59,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const getSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession()
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        await fetchProfile(session.user.id)
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        setUser(session?.user ?? null)
+        if (session?.user) {
+          await fetchProfile(session.user.id)
+        } else {
+          setLoading(false)
+        }
+      } catch (error) {
+        console.error("Erro na sessão:", error)
+        setLoading(false)
       }
-      setLoading(false)
     }
 
     getSession()
@@ -65,8 +81,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await fetchProfile(session.user.id)
       } else {
         setProfile(null)
+        setLoading(false)
       }
-      setLoading(false)
     })
 
     return () => subscription.unsubscribe()
@@ -78,7 +94,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(null)
   }
 
-  const isSuperAdmin = profile?.role === 'super_admin' || profile?.email === SUPER_ADMIN_EMAIL
+  // Definição de segurança para garantir o acesso de admin por e-mail mesmo sem perfil na tabela
+  const isSuperAdmin = profile?.role === 'super_admin' || user?.email === SUPER_ADMIN_EMAIL || profile?.email === SUPER_ADMIN_EMAIL
   const isAdmin = profile?.role === 'admin' || isSuperAdmin
 
   return (
